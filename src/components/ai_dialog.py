@@ -1,9 +1,12 @@
 """AI生成提示词对话框 - 流式输出版"""
 import json
+import os
+from typing import List
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QLineEdit,
     QTextEdit,
@@ -13,9 +16,12 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QSplitter,
     QStackedWidget,
+    QFileDialog,
+    QListWidget,
+    QListWidgetItem,
 )
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon, QPixmap
 
 from utils.ai_config import AIConfigManager
 from utils.ai_service import AIService
@@ -195,53 +201,149 @@ class AIGenerateDialog(QDialog):
         self.config_manager = AIConfigManager()
         self._is_generating = False
         self._full_content = ""
+        self.selected_images: List[str] = []
         self._setup_ui()
     
     def _setup_ui(self):
         self.setWindowTitle("AI 生成提示词")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(1100, 750)
         self.setModal(True)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f5f7fa;
+            }
+            QPushButton {
+                padding: 8px 20px;
+                border-radius: 6px;
+                border: 1px solid #d9d9d9;
+                background-color: #ffffff;
+                font-size: 13px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                border-color: #40a9ff;
+                color: #40a9ff;
+            }
+            QPushButton:disabled {
+                background-color: #f5f5f5;
+                color: #bfbfbf;
+                border-color: #d9d9d9;
+            }
+            QPushButton#primaryButton {
+                background-color: #1890ff;
+                color: white;
+                border: none;
+                font-weight: 500;
+            }
+            QPushButton#primaryButton:hover {
+                background-color: #40a9ff;
+            }
+            QPushButton#primaryButton:disabled {
+                background-color: #d9d9d9;
+            }
+            QListWidget {
+                border: 1px solid #e8e8e8;
+                border-radius: 6px;
+                background-color: white;
+                padding: 8px;
+            }
+            QListWidget::item {
+                border: 2px solid #e8e8e8;
+                border-radius: 6px;
+                padding: 4px;
+                background-color: #fafafa;
+            }
+            QListWidget::item:selected {
+                border-color: #1890ff;
+                background-color: #e6f7ff;
+            }
+            QListWidget::item:hover {
+                border-color: #40a9ff;
+                background-color: #f0f5ff;
+            }
+        """)
         
-        layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-        layout.setContentsMargins(24, 24, 24, 24)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(28, 28, 28, 28)
+        main_layout.setSpacing(20)
         
-        # 标题区域
-        header = QWidget()
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
+        # 顶部标题栏
+        header = QHBoxLayout()
+        header.setSpacing(16)
+        
+        title_container = QWidget()
+        title_layout = QVBoxLayout(title_container)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(4)
         
         title = QLabel("AI 生成提示词")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        header_layout.addWidget(title)
+        title.setStyleSheet("font-size: 24px; font-weight: 700; color: #262626;")
+        title_layout.addWidget(title)
         
-        header_layout.addStretch()
+        subtitle = QLabel("根据文字描述和参考图片生成提示词")
+        subtitle.setStyleSheet("font-size: 13px; color: #8c8c8c;")
+        title_layout.addWidget(subtitle)
         
-        # 配置按钮
-        self.config_btn = QPushButton("配置")
-        self.config_btn.clicked.connect(self._show_config)
-        header_layout.addWidget(self.config_btn)
-        
-        layout.addWidget(header)
+        header.addWidget(title_container)
+        header.addStretch()
         
         # 配置状态提示
         self.config_status = QLabel()
-        self.config_status.setStyleSheet("color: #757575; font-size: 12px;")
-        layout.addWidget(self.config_status)
+        self.config_status.setStyleSheet(
+            "font-size: 12px; padding: 4px 12px; border-radius: 12px; "
+            "background-color: #e6f7ff; color: #0958d9;"
+        )
+        self.config_status.hide()  # 隐藏模型URL/模型名显示
+        header.addWidget(self.config_status)
         self._update_config_status()
         
-        # 使用分割器分隔输入和输出
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        # 配置按钮
+        self.config_btn = QPushButton("⚙ 配置")
+        self.config_btn.setStyleSheet("""
+            QPushButton {
+                padding: 6px 16px;
+                background-color: #fafafa;
+                border: 1px solid #d9d9d9;
+            }
+            QPushButton:hover {
+                background-color: #ffffff;
+                border-color: #1890ff;
+            }
+        """)
+        self.config_btn.clicked.connect(self._show_config)
+        header.addWidget(self.config_btn)
         
-        # 输入区域
-        input_container = QWidget()
-        input_layout = QVBoxLayout(input_container)
-        input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(8)
+        main_layout.addLayout(header)
         
-        input_label = QLabel("描述你想要的画面：")
-        input_label.setStyleSheet("font-weight: 500; font-size: 13px;")
-        input_layout.addWidget(input_label)
+        # 左右分栏布局
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(20)
+        
+        # 左侧：输入区域（分为上下两部分）
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(16)
+        left_panel.setMaximumWidth(400)
+        left_panel.setMinimumWidth(350)
+        
+        # 文本输入区域
+        input_frame = QFrame()
+        input_frame.setObjectName("inputFrame")
+        input_frame.setStyleSheet(
+            "QFrame#inputFrame {"
+            "  background-color: #ffffff;"
+            "  border: 1px solid #e8e8e8;"
+            "  border-radius: 12px;"
+            "}"
+        )
+        input_frame_layout = QVBoxLayout(input_frame)
+        input_frame_layout.setContentsMargins(20, 20, 20, 20)
+        input_frame_layout.setSpacing(12)
+        
+        input_label = QLabel("📝 描述你想要的画面")
+        input_label.setStyleSheet("font-size: 15px; font-weight: 600; color: #262626;")
+        input_frame_layout.addWidget(input_label)
         
         self.prompt_input = QTextEdit()
         self.prompt_input.setPlaceholderText(
@@ -250,29 +352,118 @@ class AIGenerateDialog(QDialog):
             "- 赛博朋克风格的城市夜景，霓虹灯闪烁，雨后的街道倒映着五彩灯光\n"
             "- 蔚蓝档案风格的星野，穿着中秋节主题的汉服，在海边看月亮"
         )
-        self.prompt_input.setMaximumHeight(120)
         font = QFont("Microsoft YaHei", 12)
         self.prompt_input.setFont(font)
-        input_layout.addWidget(self.prompt_input)
+        self.prompt_input.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #d9d9d9;
+                border-radius: 6px;
+                padding: 8px;
+                min-height: 120px;
+            }
+            QTextEdit:focus {
+                border-color: #40a9ff;
+            }
+        """)
+        input_frame_layout.addWidget(self.prompt_input)
         
-        splitter.addWidget(input_container)
+        left_layout.addWidget(input_frame)
         
-        # 输出区域（流式显示）
-        output_container = QWidget()
-        output_layout = QVBoxLayout(output_container)
-        output_layout.setContentsMargins(0, 0, 0, 0)
-        output_layout.setSpacing(8)
+        # 图片上传区域
+        upload_frame = QFrame()
+        upload_frame.setObjectName("uploadFrame")
+        upload_frame.setStyleSheet(
+            "QFrame#uploadFrame {"
+            "  background-color: #ffffff;"
+            "  border: 1px solid #e8e8e8;"
+            "  border-radius: 12px;"
+            "}"
+        )
+        upload_layout = QVBoxLayout(upload_frame)
+        upload_layout.setContentsMargins(20, 20, 20, 20)
+        upload_layout.setSpacing(12)
+        
+        img_header = QHBoxLayout()
+        img_label = QLabel("🖼 参考图片")
+        img_label.setStyleSheet("font-size: 15px; font-weight: 600; color: #262626;")
+        img_header.addWidget(img_label)
+        
+        img_count = QLabel("最多 3 张")
+        img_count.setStyleSheet("font-size: 12px; color: #8c8c8c; padding: 2px 8px; background-color: #fafafa; border-radius: 4px;")
+        img_header.addWidget(img_count)
+        img_header.addStretch()
+        
+        upload_layout.addLayout(img_header)
+        
+        self.image_list = QListWidget()
+        self.image_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.image_list.setMinimumHeight(150)
+        self.image_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self.image_list.setIconSize(QPixmap(120, 120).size())
+        self.image_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.image_list.setSpacing(10)
+        self.image_list.setWordWrap(True)
+        upload_layout.addWidget(self.image_list)
+        
+        # 图片操作按钮
+        img_btn_layout = QHBoxLayout()
+        img_btn_layout.setSpacing(8)
+        
+        self.add_image_btn = QPushButton("+ 添加")
+        self.add_image_btn.clicked.connect(self._add_images)
+        self.add_image_btn.setStyleSheet("QPushButton { min-width: 60px; padding: 6px 12px; }")
+        img_btn_layout.addWidget(self.add_image_btn)
+        
+        self.remove_image_btn = QPushButton("移除")
+        self.remove_image_btn.clicked.connect(self._remove_selected_images)
+        self.remove_image_btn.setStyleSheet("QPushButton { min-width: 60px; padding: 6px 12px; }")
+        img_btn_layout.addWidget(self.remove_image_btn)
+        
+        self.clear_image_btn = QPushButton("清空")
+        self.clear_image_btn.clicked.connect(self._clear_images)
+        self.clear_image_btn.setStyleSheet("QPushButton { min-width: 60px; padding: 6px 12px; }")
+        img_btn_layout.addWidget(self.clear_image_btn)
+        
+        upload_layout.addLayout(img_btn_layout)
+        
+        helper = QLabel("支持 PNG/JPG/WebP/BMP 格式")
+        helper.setStyleSheet("color: #8c8c8c; font-size: 12px;")
+        upload_layout.addWidget(helper)
+        
+        left_layout.addWidget(upload_frame)
+        left_layout.addStretch()
+        
+        content_layout.addWidget(left_panel)
+        
+        # 右侧：AI生成结果显示
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(16)
+        
+        output_frame = QFrame()
+        output_frame.setObjectName("outputFrame")
+        output_frame.setStyleSheet(
+            "QFrame#outputFrame {"
+            "  background-color: #ffffff;"
+            "  border: 1px solid #e8e8e8;"
+            "  border-radius: 12px;"
+            "}"
+        )
+        output_frame_layout = QVBoxLayout(output_frame)
+        output_frame_layout.setContentsMargins(20, 20, 20, 20)
+        output_frame_layout.setSpacing(12)
         
         output_header = QHBoxLayout()
-        output_label = QLabel("AI 生成结果：")
-        output_label.setStyleSheet("font-weight: 500; font-size: 13px;")
+        output_label = QLabel("✨ AI 生成结果")
+        output_label.setStyleSheet("font-size: 15px; font-weight: 600; color: #262626;")
         output_header.addWidget(output_label)
         
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: #757575; font-size: 12px;")
         output_header.addWidget(self.status_label)
         output_header.addStretch()
-        output_layout.addLayout(output_header)
+        output_frame_layout.addLayout(output_header)
         
         self.output_display = QTextEdit()
         self.output_display.setReadOnly(True)
@@ -287,39 +478,126 @@ class AIGenerateDialog(QDialog):
                 border: 1px solid #3C3C3C;
                 border-radius: 6px;
                 padding: 12px;
+                min-height: 400px;
             }
         """)
-        output_layout.addWidget(self.output_display)
+        output_frame_layout.addWidget(self.output_display, 1)
         
-        splitter.addWidget(output_container)
+        right_layout.addWidget(output_frame, 1)
         
-        # 设置分割比例
-        splitter.setSizes([150, 350])
-        layout.addWidget(splitter, 1)
+        content_layout.addWidget(right_panel, 1)
         
-        # 按钮区域
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(12)
+        main_layout.addLayout(content_layout, 1)
+        
+        # 底部操作栏
+        footer = QFrame()
+        footer.setStyleSheet(
+            "background-color: #ffffff; border: 1px solid #e8e8e8; border-radius: 10px; padding: 4px;"
+        )
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(16, 12, 16, 12)
+        footer_layout.setSpacing(12)
+        
+        footer_layout.addStretch()
+        
+        # 统一按钮样式
+        button_style = """
+            QPushButton {
+                padding: 10px 24px;
+                font-size: 14px;
+                min-width: 100px;
+                max-width: 100px;
+            }
+        """
         
         self.cancel_btn = QPushButton("关闭")
+        self.cancel_btn.setStyleSheet(button_style)
         self.cancel_btn.clicked.connect(self._on_cancel)
-        btn_layout.addWidget(self.cancel_btn)
-        
-        btn_layout.addStretch()
+        footer_layout.addWidget(self.cancel_btn)
         
         self.apply_btn = QPushButton("应用到表单")
         self.apply_btn.setObjectName("secondaryButton")
         self.apply_btn.setEnabled(False)
+        self.apply_btn.setStyleSheet(button_style)
         self.apply_btn.clicked.connect(self._on_apply)
-        btn_layout.addWidget(self.apply_btn)
+        footer_layout.addWidget(self.apply_btn)
         
         self.generate_btn = QPushButton("生成")
         self.generate_btn.setObjectName("primaryButton")
-        self.generate_btn.setMinimumWidth(100)
+        self.generate_btn.setStyleSheet(button_style + """
+            QPushButton#primaryButton {
+                background-color: #1890ff;
+                color: white;
+                border: none;
+                font-weight: 500;
+            }
+            QPushButton#primaryButton:hover {
+                background-color: #40a9ff;
+            }
+            QPushButton#primaryButton:disabled {
+                background-color: #d9d9d9;
+            }
+        """)
         self.generate_btn.clicked.connect(self._on_generate)
-        btn_layout.addWidget(self.generate_btn)
+        footer_layout.addWidget(self.generate_btn)
         
-        layout.addLayout(btn_layout)
+        main_layout.addWidget(footer)
+    
+    def _add_images(self):
+        """添加图片"""
+        if len(self.selected_images) >= 3:
+            QMessageBox.information(self, "提示", "最多只能选择 3 张参考图")
+            return
+        
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择参考图片",
+            "",
+            "图像文件 (*.png *.jpg *.jpeg *.webp *.bmp)"
+        )
+        if not files:
+            return
+        
+        remaining = 3 - len(self.selected_images)
+        for path in files[:remaining]:
+            if path not in self.selected_images:
+                self.selected_images.append(path)
+                self._append_image_item(path)
+    
+    def _append_image_item(self, path: str):
+        """添加图片项到列表"""
+        pixmap = QPixmap(path)
+        if not pixmap.isNull():
+            thumbnail = pixmap.scaled(
+                120, 120,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            icon = QIcon(thumbnail)
+            item = QListWidgetItem(self.image_list)
+            item.setIcon(icon)
+            item.setText(os.path.basename(path))
+            item.setToolTip(path)
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
+        else:
+            item = QListWidgetItem(os.path.basename(path))
+            item.setToolTip(f"{path} (加载失败)")
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            self.image_list.addItem(item)
+    
+    def _remove_selected_images(self):
+        """移除选中的图片"""
+        for item in self.image_list.selectedItems():
+            path = item.data(Qt.ItemDataRole.UserRole)
+            self.selected_images = [p for p in self.selected_images if p != path]
+            idx = self.image_list.row(item)
+            self.image_list.takeItem(idx)
+    
+    def _clear_images(self):
+        """清空所有图片"""
+        self.selected_images.clear()
+        self.image_list.clear()
     
     def _update_config_status(self):
         """更新配置状态显示"""
@@ -336,11 +614,17 @@ class AIGenerateDialog(QDialog):
                 provider = "通义千问"
             else:
                 provider = base_url.split("//")[-1].split("/")[0]
-            self.config_status.setText(f"已配置: {provider} / {model}")
-            self.config_status.setStyleSheet("color: #4CAF50; font-size: 12px;")
+            self.config_status.setText(f"✓ {provider} / {model}")
+            self.config_status.setStyleSheet(
+                "font-size: 12px; padding: 4px 12px; border-radius: 12px; "
+                "background-color: #f6ffed; color: #52c41a; font-weight: 500;"
+            )
         else:
-            self.config_status.setText("未配置 API，请先点击「配置」按钮设置")
-            self.config_status.setStyleSheet("color: #FF9800; font-size: 12px;")
+            self.config_status.setText("⚠ 未配置")
+            self.config_status.setStyleSheet(
+                "font-size: 12px; padding: 4px 12px; border-radius: 12px; "
+                "background-color: #fff7e6; color: #fa8c16; font-weight: 500;"
+            )
     
     def _show_config(self):
         """显示配置对话框"""
@@ -372,8 +656,8 @@ class AIGenerateDialog(QDialog):
         
         # 检查输入
         prompt = self.prompt_input.toPlainText().strip()
-        if not prompt:
-            QMessageBox.warning(self, "提示", "请输入画面描述")
+        if not prompt and not self.selected_images:
+            QMessageBox.warning(self, "提示", "请输入画面描述或上传参考图片")
             return
         
         # 清空输出并开始
@@ -383,8 +667,12 @@ class AIGenerateDialog(QDialog):
         self._set_generating_ui(True)
         self.apply_btn.setEnabled(False)
         
+        # 传递图片路径列表
+        image_paths = self.selected_images.copy() if self.selected_images else None
+        
         self.ai_service.generate_async(
             prompt,
+            image_paths=image_paths,
             on_finished=self._on_generate_finished,
             on_error=self._on_generate_error,
             on_progress=self._on_generate_progress,
@@ -396,6 +684,10 @@ class AIGenerateDialog(QDialog):
         """设置生成中的UI状态"""
         self.prompt_input.setReadOnly(generating)
         self.config_btn.setEnabled(not generating)
+        self.add_image_btn.setEnabled(not generating)
+        self.remove_image_btn.setEnabled(not generating)
+        self.clear_image_btn.setEnabled(not generating)
+        self.image_list.setEnabled(not generating)
         
         if generating:
             self.generate_btn.setText("停止")
@@ -497,53 +789,149 @@ class AIModifyDialog(QDialog):
         self.config_manager = AIConfigManager()
         self._is_generating = False
         self._full_content = ""
+        self.selected_images: List[str] = []
         self._setup_ui()
     
     def _setup_ui(self):
         self.setWindowTitle("AI 修改提示词")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(1100, 750)
         self.setModal(True)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f5f7fa;
+            }
+            QPushButton {
+                padding: 8px 20px;
+                border-radius: 6px;
+                border: 1px solid #d9d9d9;
+                background-color: #ffffff;
+                font-size: 13px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                border-color: #40a9ff;
+                color: #40a9ff;
+            }
+            QPushButton:disabled {
+                background-color: #f5f5f5;
+                color: #bfbfbf;
+                border-color: #d9d9d9;
+            }
+            QPushButton#primaryButton {
+                background-color: #1890ff;
+                color: white;
+                border: none;
+                font-weight: 500;
+            }
+            QPushButton#primaryButton:hover {
+                background-color: #40a9ff;
+            }
+            QPushButton#primaryButton:disabled {
+                background-color: #d9d9d9;
+            }
+            QListWidget {
+                border: 1px solid #e8e8e8;
+                border-radius: 6px;
+                background-color: white;
+                padding: 8px;
+            }
+            QListWidget::item {
+                border: 2px solid #e8e8e8;
+                border-radius: 6px;
+                padding: 4px;
+                background-color: #fafafa;
+            }
+            QListWidget::item:selected {
+                border-color: #1890ff;
+                background-color: #e6f7ff;
+            }
+            QListWidget::item:hover {
+                border-color: #40a9ff;
+                background-color: #f0f5ff;
+            }
+        """)
         
-        layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-        layout.setContentsMargins(24, 24, 24, 24)
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(28, 28, 28, 28)
+        main_layout.setSpacing(20)
         
-        # 标题区域
-        header = QWidget()
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(0, 0, 0, 0)
+        # 顶部标题栏
+        header = QHBoxLayout()
+        header.setSpacing(16)
+        
+        title_container = QWidget()
+        title_layout = QVBoxLayout(title_container)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(4)
         
         title = QLabel("AI 修改提示词")
-        title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        header_layout.addWidget(title)
+        title.setStyleSheet("font-size: 24px; font-weight: 700; color: #262626;")
+        title_layout.addWidget(title)
         
-        header_layout.addStretch()
+        subtitle = QLabel("根据文字描述和参考图片修改提示词")
+        subtitle.setStyleSheet("font-size: 13px; color: #8c8c8c;")
+        title_layout.addWidget(subtitle)
         
-        # 配置按钮
-        self.config_btn = QPushButton("配置")
-        self.config_btn.clicked.connect(self._show_config)
-        header_layout.addWidget(self.config_btn)
-        
-        layout.addWidget(header)
+        header.addWidget(title_container)
+        header.addStretch()
         
         # 配置状态提示
         self.config_status = QLabel()
-        self.config_status.setStyleSheet("color: #757575; font-size: 12px;")
-        layout.addWidget(self.config_status)
+        self.config_status.setStyleSheet(
+            "font-size: 12px; padding: 4px 12px; border-radius: 12px; "
+            "background-color: #e6f7ff; color: #0958d9;"
+        )
+        self.config_status.hide()  # 隐藏模型URL/模型名显示
+        header.addWidget(self.config_status)
         self._update_config_status()
         
-        # 使用分割器分隔输入和输出
-        splitter = QSplitter(Qt.Orientation.Vertical)
+        # 配置按钮
+        self.config_btn = QPushButton("⚙ 配置")
+        self.config_btn.setStyleSheet("""
+            QPushButton {
+                padding: 6px 16px;
+                background-color: #fafafa;
+                border: 1px solid #d9d9d9;
+            }
+            QPushButton:hover {
+                background-color: #ffffff;
+                border-color: #1890ff;
+            }
+        """)
+        self.config_btn.clicked.connect(self._show_config)
+        header.addWidget(self.config_btn)
         
-        # 输入区域
-        input_container = QWidget()
-        input_layout = QVBoxLayout(input_container)
-        input_layout.setContentsMargins(0, 0, 0, 0)
-        input_layout.setSpacing(8)
+        main_layout.addLayout(header)
         
-        input_label = QLabel("描述你想要的修改：")
-        input_label.setStyleSheet("font-weight: 500; font-size: 13px;")
-        input_layout.addWidget(input_label)
+        # 左右分栏布局
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(20)
+        
+        # 左侧：输入区域（分为上下两部分）
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(16)
+        left_panel.setMaximumWidth(400)
+        left_panel.setMinimumWidth(350)
+        
+        # 文本输入区域
+        input_frame = QFrame()
+        input_frame.setObjectName("inputFrame")
+        input_frame.setStyleSheet(
+            "QFrame#inputFrame {"
+            "  background-color: #ffffff;"
+            "  border: 1px solid #e8e8e8;"
+            "  border-radius: 12px;"
+            "}"
+        )
+        input_frame_layout = QVBoxLayout(input_frame)
+        input_frame_layout.setContentsMargins(20, 20, 20, 20)
+        input_frame_layout.setSpacing(12)
+        
+        input_label = QLabel("📝 描述你想要的修改")
+        input_label.setStyleSheet("font-size: 15px; font-weight: 600; color: #262626;")
+        input_frame_layout.addWidget(input_label)
         
         self.prompt_input = QTextEdit()
         self.prompt_input.setPlaceholderText(
@@ -553,81 +941,187 @@ class AIModifyDialog(QDialog):
             "- 让画面更加梦幻一些\n"
             "- 改成秋天的感觉"
         )
-        self.prompt_input.setMaximumHeight(120)
         font = QFont("Microsoft YaHei", 12)
         self.prompt_input.setFont(font)
-        input_layout.addWidget(self.prompt_input)
+        self.prompt_input.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #d9d9d9;
+                border-radius: 6px;
+                padding: 8px;
+                min-height: 120px;
+            }
+            QTextEdit:focus {
+                border-color: #40a9ff;
+            }
+        """)
+        input_frame_layout.addWidget(self.prompt_input)
         
-        # 添加快捷操作按钮
-        quick_ops_layout = QHBoxLayout()
-        quick_ops_layout.setSpacing(8)
+        # 添加快捷操作按钮区域
+        quick_ops_label = QLabel("快速指定：")
+        quick_ops_label.setStyleSheet("font-size: 12px; color: #595959; font-weight: 500;")
+        input_frame_layout.addWidget(quick_ops_label)
         
-        quick_ops_label = QLabel("快速指定修改内容：")
-        quick_ops_layout.addWidget(quick_ops_label)
+        # 按钮容器 - 使用网格布局
+        quick_ops_container = QWidget()
+        quick_ops_grid = QGridLayout(quick_ops_container)
+        quick_ops_grid.setContentsMargins(0, 0, 0, 0)
+        quick_ops_grid.setSpacing(8)
         
         self.quick_ops_buttons = {}  # 存储按钮引用
         
-        # 创建快捷操作按钮
+        # 创建快捷操作按钮 - 每行3个
         quick_op_names = ["人物", "服饰", "动作", "地点", "镜头角度"]
-        for op_name in quick_op_names:
+        for idx, op_name in enumerate(quick_op_names):
             btn = QPushButton(op_name)
             btn.setCheckable(True)
             btn.setStyleSheet("""
                 QPushButton {
                     background-color: #f0f0f0;
-                    border: 1px solid #ccc;
-                    padding: 5px 10px;
+                    border: 1px solid #d9d9d9;
+                    padding: 6px 12px;
                     border-radius: 4px;
+                    font-size: 12px;
                 }
                 QPushButton:checked {
-                    background-color: #2196F3;
+                    background-color: #1890ff;
                     color: white;
-                    border: 1px solid #1976D2;
+                    border: 1px solid #1890ff;
+                }
+                QPushButton:hover {
+                    border-color: #40a9ff;
+                    background-color: #f0f5ff;
+                }
+                QPushButton:checked:hover {
+                    background-color: #40a9ff;
                 }
             """)
             btn.clicked.connect(lambda checked, name=op_name: self._on_quick_op_clicked(name))
-            quick_ops_layout.addWidget(btn)
-            self.quick_ops_buttons[op_name] = btn
             
-        quick_ops_layout.addStretch()
-        input_layout.addLayout(quick_ops_layout)
+            # 计算行列位置（每行3个）
+            row = idx // 3
+            col = idx % 3
+            quick_ops_grid.addWidget(btn, row, col)
+            self.quick_ops_buttons[op_name] = btn
         
-        # 添加确认按钮
+        # 确认按钮放在第二行，占据剩余空间并右对齐
         self.confirm_quick_ops_btn = QPushButton("确认选中")
         self.confirm_quick_ops_btn.clicked.connect(self._confirm_quick_ops)
         self.confirm_quick_ops_btn.setStyleSheet("""
             QPushButton {
-                background-color: #4CAF50;
+                background-color: #52c41a;
                 color: white;
                 border: none;
-                padding: 6px 12px;
+                padding: 6px 16px;
                 border-radius: 4px;
-                font-weight: bold;
+                font-size: 12px;
+                font-weight: 500;
             }
             QPushButton:hover {
-                background-color: #45a049;
+                background-color: #73d13d;
             }
         """)
-        quick_ops_layout.addWidget(self.confirm_quick_ops_btn)
+        # 放在第二行，从第2列开始，占据1列，右对齐
+        quick_ops_grid.addWidget(self.confirm_quick_ops_btn, 1, 2, 1, 1, Qt.AlignmentFlag.AlignRight)
         
-        splitter.addWidget(input_container)
+        input_frame_layout.addWidget(quick_ops_container)
         
-        # 输出区域（流式显示和对比显示）
-        output_container = QWidget()
-        output_layout = QVBoxLayout(output_container)
-        output_layout.setContentsMargins(0, 0, 0, 0)
-        output_layout.setSpacing(8)
+        left_layout.addWidget(input_frame)
+        
+        # 图片上传区域
+        upload_frame = QFrame()
+        upload_frame.setObjectName("uploadFrame")
+        upload_frame.setStyleSheet(
+            "QFrame#uploadFrame {"
+            "  background-color: #ffffff;"
+            "  border: 1px solid #e8e8e8;"
+            "  border-radius: 12px;"
+            "}"
+        )
+        upload_layout = QVBoxLayout(upload_frame)
+        upload_layout.setContentsMargins(20, 20, 20, 20)
+        upload_layout.setSpacing(12)
+        
+        img_header = QHBoxLayout()
+        img_label = QLabel("🖼 参考图片")
+        img_label.setStyleSheet("font-size: 15px; font-weight: 600; color: #262626;")
+        img_header.addWidget(img_label)
+        
+        img_count = QLabel("最多 3 张")
+        img_count.setStyleSheet("font-size: 12px; color: #8c8c8c; padding: 2px 8px; background-color: #fafafa; border-radius: 4px;")
+        img_header.addWidget(img_count)
+        img_header.addStretch()
+        
+        upload_layout.addLayout(img_header)
+        
+        self.image_list = QListWidget()
+        self.image_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.image_list.setMinimumHeight(150)
+        self.image_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self.image_list.setIconSize(QPixmap(120, 120).size())
+        self.image_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.image_list.setSpacing(10)
+        self.image_list.setWordWrap(True)
+        upload_layout.addWidget(self.image_list)
+        
+        # 图片操作按钮
+        img_btn_layout = QHBoxLayout()
+        img_btn_layout.setSpacing(8)
+        
+        self.add_image_btn = QPushButton("+ 添加")
+        self.add_image_btn.clicked.connect(self._add_images)
+        self.add_image_btn.setStyleSheet("QPushButton { min-width: 60px; padding: 6px 12px; }")
+        img_btn_layout.addWidget(self.add_image_btn)
+        
+        self.remove_image_btn = QPushButton("移除")
+        self.remove_image_btn.clicked.connect(self._remove_selected_images)
+        self.remove_image_btn.setStyleSheet("QPushButton { min-width: 60px; padding: 6px 12px; }")
+        img_btn_layout.addWidget(self.remove_image_btn)
+        
+        self.clear_image_btn = QPushButton("清空")
+        self.clear_image_btn.clicked.connect(self._clear_images)
+        self.clear_image_btn.setStyleSheet("QPushButton { min-width: 60px; padding: 6px 12px; }")
+        img_btn_layout.addWidget(self.clear_image_btn)
+        
+        upload_layout.addLayout(img_btn_layout)
+        
+        helper = QLabel("支持 PNG/JPG/WebP/BMP 格式")
+        helper.setStyleSheet("color: #8c8c8c; font-size: 12px;")
+        upload_layout.addWidget(helper)
+        
+        left_layout.addWidget(upload_frame)
+        left_layout.addStretch()
+        
+        content_layout.addWidget(left_panel)
+        
+        # 右侧：AI生成结果显示
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(16)
+        
+        output_frame = QFrame()
+        output_frame.setObjectName("outputFrame")
+        output_frame.setStyleSheet(
+            "QFrame#outputFrame {"
+            "  background-color: #ffffff;"
+            "  border: 1px solid #e8e8e8;"
+            "  border-radius: 12px;"
+            "}"
+        )
+        output_frame_layout = QVBoxLayout(output_frame)
+        output_frame_layout.setContentsMargins(20, 20, 20, 20)
+        output_frame_layout.setSpacing(12)
         
         output_header = QHBoxLayout()
-        output_label = QLabel("AI 修改结果：")
-        output_label.setStyleSheet("font-weight: 500; font-size: 13px;")
+        output_label = QLabel("✨ AI 修改结果")
+        output_label.setStyleSheet("font-size: 15px; font-weight: 600; color: #262626;")
         output_header.addWidget(output_label)
         
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: #757575; font-size: 12px;")
         output_header.addWidget(self.status_label)
         output_header.addStretch()
-        output_layout.addLayout(output_header)
+        output_frame_layout.addLayout(output_header)
         
         # 结果显示堆栈
         self.result_stack = QStackedWidget()
@@ -646,6 +1140,7 @@ class AIModifyDialog(QDialog):
                 border: 1px solid #3C3C3C;
                 border-radius: 6px;
                 padding: 12px;
+                min-height: 400px;
             }
         """)
         self.result_stack.addWidget(self.output_display)
@@ -661,42 +1156,129 @@ class AIModifyDialog(QDialog):
                 border: 1px solid #DEE2E6;
                 border-radius: 6px;
                 padding: 12px;
+                min-height: 400px;
             }
         """)
         self.result_stack.addWidget(self.compare_display)
         
-        output_layout.addWidget(self.result_stack)
+        output_frame_layout.addWidget(self.result_stack, 1)
         
-        splitter.addWidget(output_container)
+        right_layout.addWidget(output_frame, 1)
         
-        # 设置分割比例
-        splitter.setSizes([150, 350])
-        layout.addWidget(splitter, 1)
+        content_layout.addWidget(right_panel, 1)
         
-        # 按钮区域
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(12)
+        main_layout.addLayout(content_layout, 1)
+        
+        # 底部操作栏
+        footer = QFrame()
+        footer.setStyleSheet(
+            "background-color: #ffffff; border: 1px solid #e8e8e8; border-radius: 10px; padding: 4px;"
+        )
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(16, 12, 16, 12)
+        footer_layout.setSpacing(12)
+        
+        footer_layout.addStretch()
+        
+        # 统一按钮样式
+        button_style = """
+            QPushButton {
+                padding: 10px 24px;
+                font-size: 14px;
+                min-width: 100px;
+                max-width: 100px;
+            }
+        """
         
         self.cancel_btn = QPushButton("关闭")
+        self.cancel_btn.setStyleSheet(button_style)
         self.cancel_btn.clicked.connect(self._on_cancel)
-        btn_layout.addWidget(self.cancel_btn)
-        
-        btn_layout.addStretch()
+        footer_layout.addWidget(self.cancel_btn)
         
         self.apply_btn = QPushButton("应用到表单")
         self.apply_btn.setObjectName("secondaryButton")
         self.apply_btn.setEnabled(False)
+        self.apply_btn.setStyleSheet(button_style)
         self.apply_btn.clicked.connect(self._on_apply)
-        btn_layout.addWidget(self.apply_btn)
+        footer_layout.addWidget(self.apply_btn)
         
         self.generate_btn = QPushButton("修改")
         self.generate_btn.setObjectName("primaryButton")
-        self.generate_btn.setMinimumWidth(100)
+        self.generate_btn.setStyleSheet(button_style + """
+            QPushButton#primaryButton {
+                background-color: #1890ff;
+                color: white;
+                border: none;
+                font-weight: 500;
+            }
+            QPushButton#primaryButton:hover {
+                background-color: #40a9ff;
+            }
+            QPushButton#primaryButton:disabled {
+                background-color: #d9d9d9;
+            }
+        """)
         self.generate_btn.clicked.connect(self._on_generate)
-        btn_layout.addWidget(self.generate_btn)
+        footer_layout.addWidget(self.generate_btn)
         
-        layout.addLayout(btn_layout)
-
+        main_layout.addWidget(footer)
+    
+    def _add_images(self):
+        """添加图片"""
+        if len(self.selected_images) >= 3:
+            QMessageBox.information(self, "提示", "最多只能选择 3 张参考图")
+            return
+        
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择参考图片",
+            "",
+            "图像文件 (*.png *.jpg *.jpeg *.webp *.bmp)"
+        )
+        if not files:
+            return
+        
+        remaining = 3 - len(self.selected_images)
+        for path in files[:remaining]:
+            if path not in self.selected_images:
+                self.selected_images.append(path)
+                self._append_image_item(path)
+    
+    def _append_image_item(self, path: str):
+        """添加图片项到列表"""
+        pixmap = QPixmap(path)
+        if not pixmap.isNull():
+            thumbnail = pixmap.scaled(
+                120, 120,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            icon = QIcon(thumbnail)
+            item = QListWidgetItem(self.image_list)
+            item.setIcon(icon)
+            item.setText(os.path.basename(path))
+            item.setToolTip(path)
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom)
+        else:
+            item = QListWidgetItem(os.path.basename(path))
+            item.setToolTip(f"{path} (加载失败)")
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            self.image_list.addItem(item)
+    
+    def _remove_selected_images(self):
+        """移除选中的图片"""
+        for item in self.image_list.selectedItems():
+            path = item.data(Qt.ItemDataRole.UserRole)
+            self.selected_images = [p for p in self.selected_images if p != path]
+            idx = self.image_list.row(item)
+            self.image_list.takeItem(idx)
+    
+    def _clear_images(self):
+        """清空所有图片"""
+        self.selected_images.clear()
+        self.image_list.clear()
+    
     def _update_config_status(self):
         """更新配置状态显示"""
         if self.ai_service.is_configured():
@@ -712,12 +1294,18 @@ class AIModifyDialog(QDialog):
                 provider = "通义千问"
             else:
                 provider = base_url.split("//")[-1].split("/")[0]
-            self.config_status.setText(f"已配置: {provider} / {model}")
-            self.config_status.setStyleSheet("color: #4CAF50; font-size: 12px;")
+            self.config_status.setText(f"✓ {provider} / {model}")
+            self.config_status.setStyleSheet(
+                "font-size: 12px; padding: 4px 12px; border-radius: 12px; "
+                "background-color: #f6ffed; color: #52c41a; font-weight: 500;"
+            )
         else:
-            self.config_status.setText("未配置 API，请先点击「配置」按钮设置")
-            self.config_status.setStyleSheet("color: #FF9800; font-size: 12px;")
-
+            self.config_status.setText("⚠ 未配置")
+            self.config_status.setStyleSheet(
+                "font-size: 12px; padding: 4px 12px; border-radius: 12px; "
+                "background-color: #fff7e6; color: #fa8c16; font-weight: 500;"
+            )
+    
     def _show_config(self):
         """显示配置对话框"""
         dialog = AIConfigDialog(self)
@@ -760,8 +1348,8 @@ class AIModifyDialog(QDialog):
         
         # 检查输入
         prompt = self.prompt_input.toPlainText().strip()
-        if not prompt:
-            QMessageBox.warning(self, "提示", "请输入修改描述")
+        if not prompt and not self.selected_images:
+            QMessageBox.warning(self, "提示", "请输入修改描述或上传参考图片")
             return
         
         # 清空输出并开始
@@ -776,9 +1364,13 @@ class AIModifyDialog(QDialog):
         # 准备当前JSON数据
         current_json = json.dumps(self.current_data, ensure_ascii=False, indent=2)
         
+        # 传递图片路径列表
+        image_paths = self.selected_images.copy() if self.selected_images else None
+        
         self.ai_service.generate_modify_async(
             current_json,
             prompt,
+            image_paths=image_paths,
             on_finished=self._on_generate_finished,
             on_error=self._on_generate_error,
             on_progress=self._on_generate_progress,
@@ -790,10 +1382,15 @@ class AIModifyDialog(QDialog):
         """设置生成中的UI状态"""
         self.prompt_input.setReadOnly(generating)
         self.config_btn.setEnabled(not generating)
+        self.add_image_btn.setEnabled(not generating)
+        self.remove_image_btn.setEnabled(not generating)
+        self.clear_image_btn.setEnabled(not generating)
+        self.image_list.setEnabled(not generating)
         
         if generating:
             self.generate_btn.setText("停止")
             self.status_label.setText("修改中...")
+            self.status_label.setStyleSheet("color: #2196F3; font-size: 12px;")
         else:
             self.generate_btn.setText("修改")
             self.status_label.setText("")
@@ -818,6 +1415,7 @@ class AIModifyDialog(QDialog):
         self._is_generating = False
         self._set_generating_ui(False)
         self.status_label.setText("修改完成")
+        self.status_label.setStyleSheet("color: #4CAF50; font-size: 12px;")
         
         # 尝试解析JSON验证有效性
         try:
@@ -830,6 +1428,7 @@ class AIModifyDialog(QDialog):
             self.result_stack.setCurrentIndex(1)
         except json.JSONDecodeError:
             self.status_label.setText("修改完成，但内容不是有效的JSON")
+            self.status_label.setStyleSheet("color: #FF9800; font-size: 12px;")
             self.apply_btn.setEnabled(False)
 
     def _show_differences(self):
@@ -908,7 +1507,8 @@ class AIModifyDialog(QDialog):
         """生成出错"""
         self._is_generating = False
         self._set_generating_ui(False)
-        self.status_label.setText("错误")
+        self.status_label.setText(f"错误: {error_msg}")
+        self.status_label.setStyleSheet("color: #F44336; font-size: 12px;")
         QMessageBox.critical(self, "AI生成错误", error_msg)
 
     def _on_apply(self):

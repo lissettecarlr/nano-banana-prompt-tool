@@ -1,13 +1,22 @@
 """AI 提示词生成服务 - 使用 OpenAI SDK（流式输出）"""
 import json
-from typing import Callable, Optional
+import base64
+from typing import Callable, Optional, List
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from utils.ai_config import AIConfigManager
 
 
 # 系统提示词，指导AI生成符合格式的提示词
-SYSTEM_PROMPT = """你是一个专业的AI绘画提示词生成助手。用户会描述他们想要的画面，你需要根据描述生成一个结构化的JSON提示词。
+SYSTEM_PROMPT = """你是一个专业的AI绘画提示词生成助手。用户会描述他们想要的画面，或者提供参考图片，你需要根据描述和图片内容生成一个结构化的JSON提示词。
+
+如果用户提供了参考图片，请仔细分析图片中的：
+- 角色特征（外貌、服装、配饰等）
+- 场景环境（地点、光线、天气等）
+- 画面风格（画风、色彩、质感等）
+- 构图和镜头角度
+
+然后结合用户的文字描述（如果有），生成符合图片风格和内容的提示词。
 
 请严格按照以下JSON格式输出，不要输出任何其他内容：
 
@@ -72,11 +81,19 @@ SYSTEM_PROMPT = """你是一个专业的AI绘画提示词生成助手。用户�
 5. 格式要完整按照示例实现，不要遗漏任何字段"""
 
 # 修改提示词的系统提示
-MODIFY_SYSTEM_PROMPT = """你是一个专业的AI绘画提示词修改助手。用户会提供一个当前的JSON格式提示词和修改要求，你需要根据修改要求对当前提示词进行调整并返回修改后的JSON。
+MODIFY_SYSTEM_PROMPT = """你是一个专业的AI绘画提示词修改助手。用户会提供一个当前的JSON格式提示词和修改要求，可能还会提供参考图片，你需要根据修改要求和参考图片对当前提示词进行调整并返回修改后的JSON。
+
+如果用户提供了参考图片，请仔细分析图片中的：
+- 角色特征（外貌、服装、配饰等）
+- 场景环境（地点、光线、天气等）
+- 画面风格（画风、色彩、质感等）
+- 构图和镜头角度
+
+然后结合用户的文字修改要求，对提示词进行相应调整。
 
 请严格按照以下要求操作：
 1. 仔细分析用户当前的提示词结构和内容
-2. 根据用户的修改要求，针对性地调整相应字段
+2. 根据用户的修改要求和参考图片（如果有），针对性地调整相应字段
 3. 保持原有的JSON结构不变，只修改相关内容
 4. 确保修改后的内容仍然完整和合理
 5. 只输出修改后的JSON，不要有任何解释或其他内容
@@ -108,11 +125,32 @@ class AIGenerateThread(QThread):
     stream_chunk = pyqtSignal(str)   # 流式内容块
     stream_done = pyqtSignal(str)    # 流式完成，发送完整内容
     
-    def __init__(self, user_prompt: str, config_manager: AIConfigManager):
+    def __init__(self, user_prompt: str, config_manager: AIConfigManager, image_paths: Optional[List[str]] = None):
         super().__init__()
         self.user_prompt = user_prompt
         self.config_manager = config_manager
+        self.image_paths = image_paths or []
         self._cancelled = False
+    
+    def _encode_image(self, image_path: str) -> str:
+        """将图片编码为base64"""
+        try:
+            with open(image_path, "rb") as image_file:
+                return base64.b64encode(image_file.read()).decode('utf-8')
+        except Exception as e:
+            raise Exception(f"读取图片失败 {image_path}: {str(e)}")
+    
+    def _get_image_mime_type(self, image_path: str) -> str:
+        """根据文件扩展名获取MIME类型"""
+        ext = image_path.lower().split('.')[-1]
+        mime_types = {
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'webp': 'image/webp',
+            'bmp': 'image/bmp',
+        }
+        return mime_types.get(ext, 'image/png')
     
     def cancel(self):
         """取消生成"""
@@ -154,9 +192,49 @@ class AIGenerateThread(QThread):
             self.progress.emit("正在生成提示词...")
             
             # 构建消息
+            user_content = []
+            
+            # 如果有图片，添加图片到消息中
+            if self.image_paths:
+                for image_path in self.image_paths:
+                    try:
+                        base64_image = self._encode_image(image_path)
+                        mime_type = self._get_image_mime_type(image_path)
+                        user_content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_image}"
+                            }
+                        })
+                    except Exception as e:
+                        self.error.emit(f"处理图片失败: {str(e)}")
+                        return
+            
+            # 添加文本内容
+            if self.user_prompt:
+                if user_content:
+                    # 有图片和文本
+                    user_content.append({
+                        "type": "text",
+                        "text": f"请根据以下描述和参考图片生成提示词：\n\n{self.user_prompt}"
+                    })
+                else:
+                    # 只有文本，没有图片
+                    user_content = f"请根据以下描述生成提示词：\n\n{self.user_prompt}"
+            elif user_content:
+                # 只有图片没有文本
+                user_content.append({
+                    "type": "text",
+                    "text": "请根据参考图片生成提示词。"
+                })
+            else:
+                self.error.emit("请提供文字描述或参考图片")
+                return
+            
+            # 构建消息
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"请根据以下描述生成提示词：\n\n{self.user_prompt}"}
+                {"role": "user", "content": user_content}
             ]
             
             # 流式调用API
@@ -213,12 +291,33 @@ class AIModifyThread(QThread):
     stream_chunk = pyqtSignal(str)   # 流式内容块
     stream_done = pyqtSignal(str)    # 流式完成，发送完整内容
     
-    def __init__(self, current_data: str, modify_request: str, config_manager: AIConfigManager):
+    def __init__(self, current_data: str, modify_request: str, config_manager: AIConfigManager, image_paths: Optional[List[str]] = None):
         super().__init__()
         self.current_data = current_data
         self.modify_request = modify_request
         self.config_manager = config_manager
+        self.image_paths = image_paths or []
         self._cancelled = False
+    
+    def _encode_image(self, image_path: str) -> str:
+        """将图片编码为base64"""
+        try:
+            with open(image_path, "rb") as image_file:
+                return base64.b64encode(image_file.read()).decode('utf-8')
+        except Exception as e:
+            raise Exception(f"读取图片失败 {image_path}: {str(e)}")
+    
+    def _get_image_mime_type(self, image_path: str) -> str:
+        """根据文件扩展名获取MIME类型"""
+        ext = image_path.lower().split('.')[-1]
+        mime_types = {
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'webp': 'image/webp',
+            'bmp': 'image/bmp',
+        }
+        return mime_types.get(ext, 'image/png')
     
     def cancel(self):
         """取消生成"""
@@ -260,9 +359,41 @@ class AIModifyThread(QThread):
             self.progress.emit("正在修改提示词...")
             
             # 构建消息
+            user_content = []
+            
+            # 如果有图片，添加图片到消息中
+            if self.image_paths:
+                for image_path in self.image_paths:
+                    try:
+                        base64_image = self._encode_image(image_path)
+                        mime_type = self._get_image_mime_type(image_path)
+                        user_content.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_image}"
+                            }
+                        })
+                    except Exception as e:
+                        self.error.emit(f"处理图片失败: {str(e)}")
+                        return
+            
+            # 添加文本内容
+            text_content = f"当前提示词：\n{self.current_data}\n\n修改要求：{self.modify_request}\n\n请返回修改后的JSON提示词:"
+            
+            if user_content:
+                # 有图片，使用多模态格式
+                user_content.append({
+                    "type": "text",
+                    "text": text_content
+                })
+                user_message_content = user_content
+            else:
+                # 只有文本
+                user_message_content = text_content
+            
             messages = [
                 {"role": "system", "content": MODIFY_SYSTEM_PROMPT},
-                {"role": "user", "content": f"当前提示词：\n{self.current_data}\n\n修改要求：{self.modify_request}\n\n请返回修改后的JSON提示词:"}
+                {"role": "user", "content": user_message_content}
             ]
             
             # 流式调用API
@@ -328,6 +459,7 @@ class AIService:
         on_progress: Callable[[str], None] = None,
         on_stream_chunk: Callable[[str], None] = None,
         on_stream_done: Callable[[str], None] = None,
+        image_paths: Optional[List[str]] = None,
     ) -> AIGenerateThread:
         """
         异步流式生成提示词
@@ -338,6 +470,7 @@ class AIService:
         :param on_progress: 进度回调，参数为进度信息
         :param on_stream_chunk: 流式内容块回调
         :param on_stream_done: 流式完成回调，参数为完整文本
+        :param image_paths: 参考图片路径列表（可选）
         :return: 线程对象
         """
         # 如果有正在运行的线程，先停止
@@ -345,7 +478,7 @@ class AIService:
             self._current_thread.cancel()
             self._current_thread.wait(1000)
         
-        thread = AIGenerateThread(user_prompt, self.config_manager)
+        thread = AIGenerateThread(user_prompt, self.config_manager, image_paths)
         thread.finished.connect(on_finished)
         thread.error.connect(on_error)
         if on_progress:
@@ -368,6 +501,7 @@ class AIService:
         on_progress: Callable[[str], None] = None,
         on_stream_chunk: Callable[[str], None] = None,
         on_stream_done: Callable[[str], None] = None,
+        image_paths: Optional[List[str]] = None,
     ) -> AIModifyThread:
         """
         异步流式修改提示词
@@ -379,6 +513,7 @@ class AIService:
         :param on_progress: 进度回调，参数为进度信息
         :param on_stream_chunk: 流式内容块回调
         :param on_stream_done: 流式完成回调，参数为完整文本
+        :param image_paths: 参考图片路径列表（可选）
         :return: 线程对象
         """
         # 如果有正在运行的线程，先停止
@@ -386,7 +521,7 @@ class AIService:
             self._current_thread.cancel()
             self._current_thread.wait(1000)
         
-        thread = AIModifyThread(current_data, modify_request, self.config_manager)
+        thread = AIModifyThread(current_data, modify_request, self.config_manager, image_paths)
         thread.finished.connect(on_finished)
         thread.error.connect(on_error)
         if on_progress:

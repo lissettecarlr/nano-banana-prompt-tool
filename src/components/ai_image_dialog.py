@@ -383,6 +383,7 @@ class AIImageGenerateDialog(QDialog):
             "font-size: 12px; padding: 4px 12px; border-radius: 12px; "
             "background-color: #e6f7ff; color: #0958d9;"
         )
+        self.config_status_label.hide()  # 隐藏模型URL/模型名显示
         header.addWidget(self.config_status_label)
 
         config_btn = QPushButton("⚙ 配置")
