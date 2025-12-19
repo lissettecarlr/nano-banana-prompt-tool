@@ -80,6 +80,11 @@ jobs:
     needs: build-matrix
     runs-on: ubuntu-latest
     steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: 📥 Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -95,6 +100,29 @@ jobs:
           cd releases
           sha256sum *.zip > checksums.txt
 
+      - name: 📝 Generate Release Notes
+        id: release_notes
+        run: |
+          VERSION="${{ github.event.inputs.version || github.ref_name }}"
+          
+          # 获取上一个 tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || git tag --sort=-creatordate | sed -n '2p' || echo "")
+          
+          # 创建 release notes 文件
+          {
+            echo "## 🎉 Release $VERSION"
+            echo ""
+            if [ -z "$PREV_TAG" ]; then
+              echo "### 📝 Changes"
+              echo ""
+              git log --pretty=format:"- %s (%h)" --no-merges
+            else
+              echo "### 📝 Changes since $PREV_TAG"
+              echo ""
+              git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges
+            fi
+          } > release_notes.md
+
       - name: 🚀 Publish to GitHub Release
         uses: softprops/action-gh-release@v1
         env:
@@ -102,7 +130,7 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.version || github.ref_name }}
           name: Release ${{ github.event.inputs.version || github.ref_name }}
+          body_path: release_notes.md
           files: releases/*
-          generate_release_notes: true
           draft: false
           prerelease: false
