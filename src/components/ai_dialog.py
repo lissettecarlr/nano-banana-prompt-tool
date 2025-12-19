@@ -750,9 +750,9 @@ class AIGenerateDialog(QDialog):
         self.output_display.setFont(mono_font)
         self.output_display.setStyleSheet("""
             QTextEdit {
-                background-color: #1E1E1E;
-                color: #D4D4D4;
-                border: 1px solid #3C3C3C;
+                background-color: #ffffff;
+                color: #262626;
+                border: 1px solid #d9d9d9;
                 border-radius: 6px;
                 padding: 12px;
                 min-height: 400px;
@@ -1317,9 +1317,9 @@ class AIModifyDialog(QDialog):
         self.output_display.setFont(mono_font)
         self.output_display.setStyleSheet("""
             QTextEdit {
-                background-color: #1E1E1E;
-                color: #D4D4D4;
-                border: 1px solid #3C3C3C;
+                background-color: #ffffff;
+                color: #262626;
+                border: 1px solid #d9d9d9;
                 border-radius: 6px;
                 padding: 12px;
                 min-height: 400px;

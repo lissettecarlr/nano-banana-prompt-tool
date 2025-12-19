@@ -23,8 +23,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QDialog,
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QAction, QPixmap, QIcon, QImage, QCursor
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl
+from PyQt6.QtGui import QFont, QAction, QPixmap, QIcon, QImage, QCursor, QDesktopServices
 
 try:
     import pyperclip
@@ -232,8 +232,8 @@ class PromptGeneratorApp(QMainWindow):
         layout = QHBoxLayout(header)
         layout.setContentsMargins(0, 0, 0, 10)
 
-        # Logo
-        logo_label = QLabel()
+        # Logo - 可点击
+        logo_label = ClickableLabel()
         logo_path = get_images_dir() / "logo.png"
         if logo_path.exists():
             pixmap = QPixmap(str(logo_path))
@@ -241,26 +241,40 @@ class PromptGeneratorApp(QMainWindow):
             scaled_pixmap = pixmap.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
             logo_label.setPixmap(scaled_pixmap)
         logo_label.setFixedSize(52, 52)
+        logo_label.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        logo_label.setToolTip("点击访问 GitHub 仓库")
+        logo_label.clicked.connect(self._open_github_link)
         layout.addWidget(logo_label)
 
-        # 标题
+        # 标题 - 可点击
         title_container = QWidget()
         title_layout = QVBoxLayout(title_container)
         title_layout.setContentsMargins(12, 0, 0, 0)
         title_layout.setSpacing(4)
 
-        title = QLabel("Nano Banana 图片生成工具")
+        title = ClickableLabel("Nano Banana 图片生成工具")
         title.setObjectName("appTitle")
+        title.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        title.setToolTip("点击访问 GitHub 仓库")
+        title.clicked.connect(self._open_github_link)
         title_layout.addWidget(title)
 
-        subtitle = QLabel("一站式AI图片生成工具，通过结构化提示词控制图片生成质量")
+        subtitle = ClickableLabel("一站式AI图片生成工具，通过结构化提示词控制图片生成质量")
         subtitle.setObjectName("appSubtitle")
+        subtitle.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        subtitle.setToolTip("点击访问 GitHub 仓库")
+        subtitle.clicked.connect(self._open_github_link)
         title_layout.addWidget(subtitle)
 
         layout.addWidget(title_container)
         layout.addStretch()
 
         return header
+
+    def _open_github_link(self):
+        """打开GitHub仓库链接"""
+        url = QUrl("https://github.com/lissettecarlr/nano-banana-prompt-studio")
+        QDesktopServices.openUrl(url)
 
     def _create_preset_bar(self) -> QWidget:
         """创建预设工具栏"""
@@ -589,22 +603,8 @@ class PromptGeneratorApp(QMainWindow):
 
         # 添加参考图按钮
         self.add_image_btn = QPushButton("添加参考图")
+        self.add_image_btn.setObjectName("secondaryButton")
         self.add_image_btn.clicked.connect(self._add_images)
-        self.add_image_btn.setStyleSheet("""
-            QPushButton {
-                padding: 6px 16px;
-                font-size: 12px;
-                border: 1px solid #d9d9d9;
-                border-radius: 4px;
-                background-color: #fafafa;
-                min-width: 90px;
-            }
-            QPushButton:hover {
-                border-color: #40a9ff;
-                background-color: #e6f7ff;
-                color: #1890ff;
-            }
-        """)
         img_row_layout.addWidget(self.add_image_btn)
 
         # 图片按钮容器（显示图一、图二等）
