@@ -279,19 +279,39 @@ class UnifiedAIConfigDialog(QDialog):
         
         # ===== 第一部分：提示词生成/修改AI配置 =====
         prompt_frame = QFrame()
-        prompt_frame.setStyleSheet(
-            "background-color: #ffffff; border: 1px solid #e8e8e8; "
-            "border-radius: 12px; padding: 4px;"
-        )
+        prompt_frame.setObjectName("promptConfigFrame")
+        prompt_frame.setStyleSheet("""
+            QFrame#promptConfigFrame {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #f0f7ff, stop:1 #ffffff);
+                border: 2px solid #1890ff;
+                border-radius: 12px;
+                padding: 4px;
+            }
+        """)
         prompt_layout = QVBoxLayout(prompt_frame)
         prompt_layout.setContentsMargins(20, 20, 20, 20)
         prompt_layout.setSpacing(16)
         
-        prompt_title = QLabel("提示词生成/修改 AI")
-        prompt_title.setStyleSheet("font-size: 16px; font-weight: 600; color: #262626;")
-        prompt_layout.addWidget(prompt_title)
+        # 标题区域，带背景
+        prompt_title_container = QWidget()
+        prompt_title_container.setStyleSheet("""
+            QWidget {
+                background-color: #1890ff;
+                border-radius: 8px;
+                padding: 12px;
+            }
+        """)
+        prompt_title_layout = QHBoxLayout(prompt_title_container)
+        prompt_title_layout.setContentsMargins(0, 0, 0, 0)
+        prompt_title_layout.setSpacing(10)
         
-
+        prompt_title = QLabel("提示词生成/修改 AI")
+        prompt_title.setStyleSheet("font-size: 16px; font-weight: 700; color: #ffffff;")
+        prompt_title_layout.addWidget(prompt_title)
+        prompt_title_layout.addStretch()
+        
+        prompt_layout.addWidget(prompt_title_container)
         
         prompt_layout.addWidget(self._build_labeled_widget("Base URL", self._create_url_input("prompt")))
         prompt_layout.addWidget(self._build_labeled_widget("API Key", self._create_key_input("prompt")))
@@ -301,17 +321,39 @@ class UnifiedAIConfigDialog(QDialog):
         
         # ===== 第二部分：图片生成AI配置 =====
         image_frame = QFrame()
-        image_frame.setStyleSheet(
-            "background-color: #ffffff; border: 1px solid #e8e8e8; "
-            "border-radius: 12px; padding: 4px;"
-        )
+        image_frame.setObjectName("imageConfigFrame")
+        image_frame.setStyleSheet("""
+            QFrame#imageConfigFrame {
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #fff7e6, stop:1 #ffffff);
+                border: 2px solid #fa8c16;
+                border-radius: 12px;
+                padding: 4px;
+            }
+        """)
         image_layout = QVBoxLayout(image_frame)
         image_layout.setContentsMargins(20, 20, 20, 20)
         image_layout.setSpacing(16)
         
+        # 标题区域，带背景
+        image_title_container = QWidget()
+        image_title_container.setStyleSheet("""
+            QWidget {
+                background-color: #fa8c16;
+                border-radius: 8px;
+                padding: 12px;
+            }
+        """)
+        image_title_layout = QHBoxLayout(image_title_container)
+        image_title_layout.setContentsMargins(0, 0, 0, 0)
+        image_title_layout.setSpacing(10)
+        
         image_title = QLabel("图片生成 AI")
-        image_title.setStyleSheet("font-size: 16px; font-weight: 600; color: #262626;")
-        image_layout.addWidget(image_title)
+        image_title.setStyleSheet("font-size: 16px; font-weight: 700; color: #ffffff;")
+        image_title_layout.addWidget(image_title)
+        image_title_layout.addStretch()
+        
+        image_layout.addWidget(image_title_container)
         
 
         image_layout.addWidget(self._build_labeled_widget("Base URL", self._create_url_input("image")))

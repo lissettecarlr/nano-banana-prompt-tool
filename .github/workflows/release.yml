@@ -1,6 +1,9 @@
 name: 🚀 Release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
@@ -28,7 +31,8 @@ jobs:
 
     env:
       PYTHONIOENCODING: utf-8
-      ASSET_NAME: nano-banana-prompt-studio-${{ matrix.platform }}-${{ inputs.version }}.zip
+      VERSION: ${{ github.event.inputs.version || github.ref_name }}
+      ASSET_NAME: nano-banana-prompt-studio-${{ matrix.platform }}-${{ github.event.inputs.version || github.ref_name }}.zip
 
     steps:
       - name: 📥 Checkout
@@ -93,8 +97,12 @@ jobs:
 
       - name: 🚀 Publish to GitHub Release
         uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ inputs.version }}
-          name: Release ${{ inputs.version }}
+          tag_name: ${{ github.event.inputs.version || github.ref_name }}
+          name: Release ${{ github.event.inputs.version || github.ref_name }}
           files: releases/*
           generate_release_notes: true
+          draft: false
+          prerelease: false
